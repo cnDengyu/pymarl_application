@@ -1,18 +1,21 @@
 import torch as th
 from torch.distributions import Categorical
-from .epsilon_schedules import DecayThenFlatSchedule
+from pymarl_application.components.epsilon_schedules import DecayThenFlatSchedule
 REGISTRY = {}
 
 
 class MultinomialActionSelector():
 
-    def __init__(self, args):
-        self.args = args
+    def __init__(self,
+                 epsilon_start,
+                 epsilon_finish,
+                 epsilon_anneal_time,
+                 test_greedy: bool = True):
 
-        self.schedule = DecayThenFlatSchedule(args.epsilon_start, args.epsilon_finish, args.epsilon_anneal_time,
+        self.schedule = DecayThenFlatSchedule(epsilon_start, epsilon_finish, epsilon_anneal_time,
                                               decay="linear")
         self.epsilon = self.schedule.eval(0)
-        self.test_greedy = getattr(args, "test_greedy", True)
+        self.test_greedy = test_greedy
 
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
         masked_policies = agent_inputs.clone()
@@ -33,10 +36,14 @@ REGISTRY["multinomial"] = MultinomialActionSelector
 
 class EpsilonGreedyActionSelector():
 
-    def __init__(self, args):
-        self.args = args
+    def __init__(self, 
+                 epsilon_start,
+                 epsilon_finish,
+                 epsilon_anneal_time,
+                 evaluation_epsilon):
 
-        self.schedule = DecayThenFlatSchedule(args.epsilon_start, args.epsilon_finish, args.epsilon_anneal_time,
+        self.evaluation_epsilon = evaluation_epsilon
+        self.schedule = DecayThenFlatSchedule(epsilon_start, epsilon_finish, epsilon_anneal_time,
                                               decay="linear")
         self.epsilon = self.schedule.eval(0)
 
@@ -47,7 +54,7 @@ class EpsilonGreedyActionSelector():
 
         if test_mode:
             # Greedy action selection only
-            self.epsilon = self.args.evaluation_epsilon
+            self.epsilon = self.evaluation_epsilon
 
         # mask actions that are excluded from selection
         masked_q_values = agent_inputs.clone()
@@ -66,8 +73,8 @@ REGISTRY["epsilon_greedy"] = EpsilonGreedyActionSelector
 
 class SoftPoliciesSelector():
 
-    def __init__(self, args):
-        self.args = args
+    def __init__(self):
+        pass
 
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
         m = Categorical(agent_inputs)
@@ -76,3 +83,13 @@ class SoftPoliciesSelector():
 
 
 REGISTRY["soft_policies"] = SoftPoliciesSelector
+
+def registered_action_selector(args):
+    if args.action_selector == "multinomial":
+        test_greedy = getattr(args, "test_greedy", True)
+        action_selector = MultinomialActionSelector(args.epsilon_start, args.epsilon_finish, args.epsilon_anneal_time, test_greedy)
+    elif args.action_selector == "epsilon_greedy":
+        action_selector = EpsilonGreedyActionSelector(args.epsilon_start, args.epsilon_finish, args.epsilon_anneal_time, args.evaluation_epsilon)
+    elif args.action_selector == "soft_policies":
+        action_selector = SoftPoliciesSelector()
+    return action_selector

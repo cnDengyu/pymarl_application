@@ -1,13 +1,41 @@
 import copy
-from components.episode_buffer import EpisodeBatch
-from modules.mixers.qtran import QTranBase
+from pymarl_application.components.episode_buffer import EpisodeBatch
+from pymarl_application.modules.mixers.qtran import QTranBase
 import torch as th
 from torch.optim import RMSprop, Adam
 
 
 class QLearner:
-    def __init__(self, mac, scheme, logger, args):
-        self.args = args
+    def __init__(self, mac, scheme, logger,
+                 n_agents,
+                 n_actions,
+                 mixer,
+                 lr,
+                 optim_alpha,
+                 optim_eps,
+                 learner_log_interval,
+                 double_q : bool,
+                 gamma,
+                 opt_loss,
+                 nopt_min_loss,
+                 grad_norm_clip,
+                 target_update_interval,
+                 state_shape,
+                 qtran_arch,
+                 mixing_embed_dim,
+                 rnn_hidden_dim,
+                 network_size):
+
+        self.n_agents = n_agents
+        self.n_actions = n_actions
+        self.learner_log_interval = learner_log_interval
+        self.double_q = double_q
+        self.gamma = gamma
+        self.opt_loss = opt_loss
+        self.nopt_min_loss = nopt_min_loss
+        self.grad_norm_clip = grad_norm_clip
+        self.target_update_interval = target_update_interval
+
         self.mac = mac
         self.logger = logger
 
@@ -16,20 +44,20 @@ class QLearner:
         self.last_target_update_episode = 0
 
         self.mixer = None
-        if args.mixer == "qtran_base":
-            self.mixer = QTranBase(args)
-        elif args.mixer == "qtran_alt":
+        if mixer == "qtran_base":
+            self.mixer = QTranBase(n_agents, n_actions, state_shape, qtran_arch, mixing_embed_dim, rnn_hidden_dim, network_size)
+        elif mixer == "qtran_alt":
             raise Exception("Not implemented here!")
 
         self.params += list(self.mixer.parameters())
         self.target_mixer = copy.deepcopy(self.mixer)
 
-        self.optimiser = RMSprop(params=self.params, lr=args.lr, alpha=args.optim_alpha, eps=args.optim_eps)
+        self.optimiser = RMSprop(params=self.params, lr=lr, alpha=optim_alpha, eps=optim_eps)
 
         # a little wasteful to deepcopy (e.g. duplicates action selector), but should work for any MAC
         self.target_mac = copy.deepcopy(mac)
 
-        self.log_stats_t = -self.args.learner_log_interval - 1
+        self.log_stats_t = -self.learner_log_interval - 1
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # Get the relevant quantities
@@ -50,7 +78,7 @@ class QLearner:
             mac_hidden_states.append(self.mac.hidden_states)
         mac_out = th.stack(mac_out, dim=1)  # Concat over time
         mac_hidden_states = th.stack(mac_hidden_states, dim=1)
-        mac_hidden_states = mac_hidden_states.reshape(batch.batch_size, self.args.n_agents, batch.max_seq_length, -1).transpose(1,2) #btav
+        mac_hidden_states = mac_hidden_states.reshape(batch.batch_size, self.n_agents, batch.max_seq_length, -1).transpose(1,2) #btav
 
         # Pick the Q-Values for the actions taken by each agent
         chosen_action_qvals = th.gather(mac_out[:, :-1], dim=3, index=actions).squeeze(3)  # Remove the last dim
@@ -67,7 +95,7 @@ class QLearner:
         # We don't need the first timesteps Q-Value estimate for calculating targets
         target_mac_out = th.stack(target_mac_out[:], dim=1)  # Concat across time
         target_mac_hidden_states = th.stack(target_mac_hidden_states, dim=1)
-        target_mac_hidden_states = target_mac_hidden_states.reshape(batch.batch_size, self.args.n_agents, batch.max_seq_length, -1).transpose(1,2) #btav
+        target_mac_hidden_states = target_mac_hidden_states.reshape(batch.batch_size, self.n_agents, batch.max_seq_length, -1).transpose(1,2) #btav
 
         # Mask out unavailable actions
         target_mac_out[avail_actions[:, :] == 0] = -9999999  # From OG deepmarl
@@ -79,23 +107,23 @@ class QLearner:
         # Best joint-action computed by regular agents
         max_actions_qvals, max_actions_current = mac_out_maxs[:, :].max(dim=3, keepdim=True)
 
-        if self.args.mixer == "qtran_base":
+        if self.mixer == "qtran_base":
             # -- TD Loss --
             # Joint-action Q-Value estimates
             joint_qs, vs = self.mixer(batch[:, :-1], mac_hidden_states[:,:-1])
 
             # Need to argmax across the target agents' actions to compute target joint-action Q-Values
-            if self.args.double_q:
-                max_actions_current_ = th.zeros(size=(batch.batch_size, batch.max_seq_length, self.args.n_agents, self.args.n_actions), device=batch.device)
+            if self.double_q:
+                max_actions_current_ = th.zeros(size=(batch.batch_size, batch.max_seq_length, self.n_agents, self.n_actions), device=batch.device)
                 max_actions_current_onehot = max_actions_current_.scatter(3, max_actions_current[:, :], 1)
                 max_actions_onehot = max_actions_current_onehot
             else:
-                max_actions = th.zeros(size=(batch.batch_size, batch.max_seq_length, self.args.n_agents, self.args.n_actions), device=batch.device)
+                max_actions = th.zeros(size=(batch.batch_size, batch.max_seq_length, self.n_agents, self.n_actions), device=batch.device)
                 max_actions_onehot = max_actions.scatter(3, target_max_actions[:, :], 1)
             target_joint_qs, target_vs = self.target_mixer(batch[:, 1:], hidden_states=target_mac_hidden_states[:,1:], actions=max_actions_onehot[:,1:])
 
             # Td loss targets
-            td_targets = rewards.reshape(-1,1) + self.args.gamma * (1 - terminated.reshape(-1, 1)) * target_joint_qs
+            td_targets = rewards.reshape(-1,1) + self.gamma * (1 - terminated.reshape(-1, 1)) * target_joint_qs
             td_error = (joint_qs - td_targets.detach())
             masked_td_error = td_error * mask.reshape(-1, 1)
             td_loss = (masked_td_error ** 2).sum() / mask.sum()
@@ -103,8 +131,8 @@ class QLearner:
 
             # -- Opt Loss --
             # Argmax across the current agents' actions
-            if not self.args.double_q: # Already computed if we're doing double Q-Learning
-                max_actions_current_ = th.zeros(size=(batch.batch_size, batch.max_seq_length, self.args.n_agents, self.args.n_actions), device=batch.device )
+            if not self.double_q: # Already computed if we're doing double Q-Learning
+                max_actions_current_ = th.zeros(size=(batch.batch_size, batch.max_seq_length, self.n_agents, self.n_actions), device=batch.device )
                 max_actions_current_onehot = max_actions_current_.scatter(3, max_actions_current[:, :], 1)
             max_joint_qs, _ = self.mixer(batch[:, :-1], mac_hidden_states[:,:-1], actions=max_actions_current_onehot[:,:-1]) # Don't use the target network and target agent max actions as per author's email
 
@@ -122,34 +150,34 @@ class QLearner:
             nopt_loss = (masked_nopt_error ** 2).sum() / mask.sum()
             # -- Nopt loss --
 
-        elif self.args.mixer == "qtran_alt":
+        elif self.mixer == "qtran_alt":
             raise Exception("Not supported yet.")
 
-        loss = td_loss + self.args.opt_loss * opt_loss + self.args.nopt_min_loss * nopt_loss
+        loss = td_loss + self.opt_loss * opt_loss + self.nopt_min_loss * nopt_loss
 
         # Optimise
         self.optimiser.zero_grad()
         loss.backward()
-        grad_norm = th.nn.utils.clip_grad_norm_(self.params, self.args.grad_norm_clip)
+        grad_norm = th.nn.utils.clip_grad_norm_(self.params, self.grad_norm_clip)
         self.optimiser.step()
 
-        if (episode_num - self.last_target_update_episode) / self.args.target_update_interval >= 1.0:
+        if (episode_num - self.last_target_update_episode) / self.target_update_interval >= 1.0:
             self._update_targets()
             self.last_target_update_episode = episode_num
 
-        if t_env - self.log_stats_t >= self.args.learner_log_interval:
+        if t_env - self.log_stats_t >= self.learner_log_interval:
             self.logger.log_stat("loss", loss.item(), t_env)
             self.logger.log_stat("td_loss", td_loss.item(), t_env)
             self.logger.log_stat("opt_loss", opt_loss.item(), t_env)
             self.logger.log_stat("nopt_loss", nopt_loss.item(), t_env)
             self.logger.log_stat("grad_norm", grad_norm.item(), t_env)
-            if self.args.mixer == "qtran_base":
+            if self.mixer == "qtran_base":
                 mask_elems = mask.sum().item()
                 self.logger.log_stat("td_error_abs", (masked_td_error.abs().sum().item()/mask_elems), t_env)
                 self.logger.log_stat("td_targets", ((masked_td_error).sum().item()/mask_elems), t_env)
                 self.logger.log_stat("td_chosen_qs", (joint_qs.sum().item()/mask_elems), t_env)
                 self.logger.log_stat("v_mean", (vs.sum().item()/mask_elems), t_env)
-                self.logger.log_stat("agent_indiv_qs", ((chosen_action_qvals * mask).sum().item()/(mask_elems * self.args.n_agents)), t_env)
+                self.logger.log_stat("agent_indiv_qs", ((chosen_action_qvals * mask).sum().item()/(mask_elems * self.n_agents)), t_env)
             self.log_stats_t = t_env
 
     def _update_targets(self):

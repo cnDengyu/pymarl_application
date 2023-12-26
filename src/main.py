@@ -9,7 +9,7 @@ from sacred.observers import FileStorageObserver, MongoObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 import sys
 import torch as th
-from utils.logging import get_logger
+from pymarl_application.utils.logging import get_logger
 import yaml
 
 from run import run
@@ -55,7 +55,7 @@ def _get_config(params, arg_name, subfolder):
 
 def recursive_dict_update(d, u):
     for k, v in u.items():
-        if isinstance(v, collections.Mapping):
+        if isinstance(v, collections.abc.Mapping):
             d[k] = recursive_dict_update(d.get(k, {}), v)
         else:
             d[k] = v
@@ -103,6 +103,8 @@ if __name__ == '__main__':
             map_name = param.split("=")[1]
         elif param.startswith("env_args.key"):
             map_name = param.split("=")[1]
+    
+    map_name = map_name.replace(':', '-') # ':' is not valid in filenames on Windows
 
     # Save to disk by default for sacred
     logger.info("Saving to FileStorageObserver in results/sacred.")

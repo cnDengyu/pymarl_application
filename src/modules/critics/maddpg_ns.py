@@ -2,20 +2,28 @@
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
-from modules.critics.mlp import MLP
+from pymarl_application.modules.critics.mlp import MLP
 
 
 class MADDPGCriticNS(nn.Module):
-    def __init__(self, scheme, args):
+    def __init__(self, scheme,
+                 n_actions,
+                 n_agents,
+                 hidden_dim,
+                 obs_individual_obs: bool = False,
+                 obs_last_action: bool = False):
         super(MADDPGCriticNS, self).__init__()
-        self.args = args
-        self.n_actions = args.n_actions
-        self.n_agents = args.n_agents
+
+        self.n_actions = n_actions
+        self.n_agents = n_agents
+        self.obs_individual_obs = obs_individual_obs
+        self.obs_last_action = obs_last_action
+
         self.input_shape = self._get_input_shape(scheme) + self.n_actions * self.n_agents
-        if self.args.obs_last_action:
+        if self.obs_last_action:
             self.input_shape += self.n_actions
         self.output_type = "q"
-        self.critics = [MLP(self.input_shape, self.args.hidden_dim, 1) for _ in range(self.n_agents)]
+        self.critics = [MLP(self.input_shape, hidden_dim, 1) for _ in range(self.n_agents)]
 
     def forward(self, inputs, actions):
         inputs = th.cat((inputs, actions), dim=-1)
@@ -29,7 +37,7 @@ class MADDPGCriticNS(nn.Module):
         # state
         input_shape = scheme["state"]["vshape"]
         # observation
-        if self.args.obs_individual_obs:
+        if self.obs_individual_obs:
             input_shape += scheme["obs"]["vshape"]
         return input_shape
 

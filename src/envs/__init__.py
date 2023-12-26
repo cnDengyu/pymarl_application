@@ -1,6 +1,7 @@
 from functools import partial
 import pretrained
-from smac.env import MultiAgentEnv, StarCraft2Env
+# from smac.env import MultiAgentEnv, StarCraft2Env
+from smac.env import MultiAgentEnv
 import sys
 import os
 import gym
@@ -15,7 +16,7 @@ def env_fn(env, **kwargs) -> MultiAgentEnv:
 
 
 REGISTRY = {}
-REGISTRY["sc2"] = partial(env_fn, env=StarCraft2Env)
+# REGISTRY["sc2"] = partial(env_fn, env=StarCraft2Env)
 
 if sys.platform == "linux":
     os.environ.setdefault(

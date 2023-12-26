@@ -1,3 +1,17 @@
+# PyMARL Application
+
+The PyMARL Application codebase is aimed at MARL application. 
+The original [PyMARL](https://github.com/oxwhirl/pymarl) and [ePyMARL](https://github.com/uoe-agents/epymarl) are both wonderful frameworks for MARL, 
+but they are not easy to deploy on hardwares. 
+The main reason that they are not suitable for deployment is: All of the modules are kidnapped by "REGISTRY". 
+In the old framework, user need a magic parameter `args` to construct everything, including `envs`, `runners`, `learners`, `agents`, `critics`, etc. 
+However, when user try to deploy the models on a hardware, users want to build the pytorch module in one file or even one line. 
+
+In this codebase, users can customize your own `Critics`, `Agents` and train them with the standard `Runner` and `MultiAgentController`. 
+Meanwhile, this codebase is compatible with old frameworks, which means that we can merge furture updates from them.
+
+The documentation of new features has not been written, following is the old usage of this framework.
+
 # Extended Python MARL framework - EPyMARL
 
 EPyMARL is  an extension of [PyMARL](https://github.com/oxwhirl/pymarl), and includes
@@ -24,9 +38,11 @@ python main.py --config=pac_ns --env-config=gymma with env_args.time_limit=1 env
 ```
 
 # Table of Contents
+- [PyMARL Application](#pymarl-application)
 - [Extended Python MARL framework - EPyMARL](#extended-python-marl-framework---epymarl)
+  - [Update as of *15th July 2023*!](#update-as-of-15th-july-2023)
 - [Table of Contents](#table-of-contents)
-- [Installation & Run instructions](#installation--run-instructions)
+- [Installation \& Run instructions](#installation--run-instructions)
   - [Installing LBF, RWARE, and MPE](#installing-lbf-rware-and-mpe)
   - [Using A Custom Gym Environment](#using-a-custom-gym-environment)
 - [Run an experiment on a Gym environment](#run-an-experiment-on-a-gym-environment)
@@ -34,7 +50,7 @@ python main.py --config=pac_ns --env-config=gymma with env_args.time_limit=1 env
 - [Saving and loading learnt models](#saving-and-loading-learnt-models)
   - [Saving models](#saving-models)
   - [Loading models](#loading-models)
-- [Citing PyMARL and EPyMARL](#citing-pymarl-and-epymarl)
+- [Citing EPyMARL and PyMARL](#citing-epymarl-and-pymarl)
 - [License](#license)
 
 # Installation & Run instructions

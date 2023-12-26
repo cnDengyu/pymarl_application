@@ -5,20 +5,30 @@ import torch.nn.functional as F
 
 
 class MADDPGCritic(nn.Module):
-    def __init__(self, scheme, args):
+    def __init__(self, scheme,
+                 n_actions,
+                 n_agents,
+                 hidden_dim,
+                 obs_individual_obs: bool = False,
+                 obs_last_action: bool = False,
+                 obs_agent_id: bool = False):
         super(MADDPGCritic, self).__init__()
-        self.args = args
-        self.n_actions = args.n_actions
-        self.n_agents = args.n_agents
+
+        self.n_actions = n_actions
+        self.n_agents = n_agents
+        self.obs_individual_obs = obs_individual_obs
+        self.obs_last_action = obs_last_action
+        self.obs_agent_id = obs_agent_id
+
         self.input_shape = self._get_input_shape(scheme) + self.n_actions * self.n_agents
-        if self.args.obs_last_action:
+        if self.obs_last_action:
             self.input_shape += self.n_actions
         self.output_type = "q"
 
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, args.hidden_dim)
-        self.fc2 = nn.Linear(args.hidden_dim, args.hidden_dim)
-        self.fc3 = nn.Linear(args.hidden_dim, 1)
+        self.fc1 = nn.Linear(self.input_shape, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, 1)
 
     def forward(self, inputs, actions):
         inputs = th.cat((inputs, actions), dim=-1)
@@ -32,9 +42,9 @@ class MADDPGCritic(nn.Module):
         input_shape = scheme["state"]["vshape"]
         # print(scheme["state"]["vshape"], scheme["obs"]["vshape"], self.n_agents, scheme["actions_one"])
         # whether to add the individual observation
-        if self.args.obs_individual_obs:
+        if self.obs_individual_obs:
             input_shape += scheme["obs"]["vshape"]
         # agent id
-        if self.args.obs_agent_id:
+        if self.obs_agent_id:
             input_shape += self.n_agents
         return input_shape

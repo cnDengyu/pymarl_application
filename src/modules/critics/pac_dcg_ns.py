@@ -2,7 +2,7 @@
 
 import torch as th
 import contextlib
-from modules.agents import REGISTRY as agent_REGISTRY
+from pymarl_application.modules.agents.rnn_feature_agent import RNNFeatureAgent
 import itertools
 import numpy as np
 import torch as th
@@ -15,24 +15,33 @@ class DCGCriticNS():
 
     # ================================ Constructors ===================================================================
 
-    def __init__(self, scheme, args):
+    def __init__(self, scheme,
+                 n_agents,
+                 n_actions,
+                 hidden_dim,
+                 agent_output_type,
+                 cg_payoff_rank,
+                 msg_iterations,
+                 msg_normalized,
+                 msg_anytime,
+                 cg_utilities_hidden_dim,
+                 cg_edges,
+                 cg_payoffs_hidden_dim):
 
-        self.n_agents = args.n_agents
-        self.args = args
+        self.n_agents = n_agents
+        self.n_actions = n_actions
+        self.hidden_dim = hidden_dim
         input_shape = self._get_input_shape(scheme)
         self._build_agents(input_shape)
-        self.agent_output_type = args.agent_output_type
-        self.n_actions = args.n_actions
-        self.payoff_rank = args.cg_payoff_rank
+        self.agent_output_type = agent_output_type
+        self.payoff_rank = cg_payoff_rank
         self.payoff_decomposition = isinstance(self.payoff_rank, int) and self.payoff_rank > 0
-        self.iterations = args.msg_iterations
-        self.normalized = args.msg_normalized
-        self.anytime = args.msg_anytime
+        self.iterations = msg_iterations
+        self.normalized = msg_normalized
+        self.anytime = msg_anytime
 
         # New utilities and payoffs
-        self.utility_fun = [self._mlp(self.args.hidden_dim,
-                                                          args.cg_utilities_hidden_dim,
-                                                          self.n_actions)
+        self.utility_fun = [self._mlp(self.hidden_dim, cg_utilities_hidden_dim, self.n_actions)
                             for _ in range(self.n_agents)]
 
         payoff_out = 2 * self.payoff_rank * self.n_actions if self.payoff_decomposition else self.n_actions ** 2
@@ -40,9 +49,9 @@ class DCGCriticNS():
         self.edges_from = None
         self.edges_to = None
         self.edges_n_in = None
-        self._set_edges(self._edge_list(args.cg_edges))
+        self._set_edges(self._edge_list(cg_edges))
 
-        self.payoff_fun = [self._mlp(2*self.args.hidden_dim, args.cg_payoffs_hidden_dim,
+        self.payoff_fun = [self._mlp(2*hidden_dim, cg_payoffs_hidden_dim,
                                                          payoff_out) for _ in range(len(self.edges_from))]
 
     # ================== DCG Core Methods =============================================================================
@@ -209,7 +218,8 @@ class DCGCriticNS():
 
     def _build_agents(self, input_shape):
         """ Overloads method to build a list of input-encoders for the different agents. """
-        self.agents = [agent_REGISTRY["rnn_feat"](input_shape, self.args) for _ in range(self.n_agents)]
+        # self.agents = [agent_REGISTRY["rnn_feat"](input_shape, self.args) for _ in range(self.n_agents)]
+        self.agents = [RNNFeatureAgent(input_shape, self.hidden_dim) for _ in range(self.n_agents)]
 
     def cuda(self):
         """ Overloads methornn_d to make sure all encoders, utilities and payoffs are on the GPU. """

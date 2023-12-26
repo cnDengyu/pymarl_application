@@ -36,4 +36,7 @@ urllib3==1.23
 websocket-client==0.53.0
 whichcraft==0.5.2
 wrapt==1.10.11
+seaborn
+torch_scatter
+einops
 git+https://github.com/oxwhirl/smac.git

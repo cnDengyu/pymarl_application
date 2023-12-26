@@ -5,17 +5,27 @@ import numpy as np
 
 
 class QTranBase(nn.Module):
-    def __init__(self, args):
+    def __init__(self,
+                 n_agents,
+                 n_actions,
+                 state_shape,
+                 qtran_arch,
+                 mixing_embed_dim,
+                 rnn_hidden_dim,
+                 network_size):
         super(QTranBase, self).__init__()
 
-        self.args = args
+        self.n_agents = n_agents
+        self.n_actions = n_actions
+        self.state_dim = int(np.prod(state_shape))
+        self.qtran_arch = qtran_arch
+        self.mixing_embed_dim = mixing_embed_dim
+        self.rnn_hidden_dim = rnn_hidden_dim
+        self.network_size = network_size
 
-        self.n_agents = args.n_agents
-        self.n_actions = args.n_actions
-        self.state_dim = int(np.prod(args.state_shape))
-        self.arch = self.args.qtran_arch # QTran architecture
+        self.arch = self.qtran_arch # QTran architecture
 
-        self.embed_dim = args.mixing_embed_dim
+        self.embed_dim = mixing_embed_dim
 
         # Q(s,u)
         if self.arch == "coma_critic":
@@ -23,11 +33,11 @@ class QTranBase(nn.Module):
             q_input_size = self.state_dim + (self.n_agents * self.n_actions)
         elif self.arch == "qtran_paper":
             # Q takes [state, agent_action_observation_encodings]
-            q_input_size = self.state_dim + self.args.rnn_hidden_dim + self.n_actions
+            q_input_size = self.state_dim + self.rnn_hidden_dim + self.n_actions
         else:
             raise Exception("{} is not a valid QTran architecture".format(self.arch))
 
-        if self.args.network_size == "small":
+        if self.network_size == "small":
             self.Q = nn.Sequential(nn.Linear(q_input_size, self.embed_dim),
                                    nn.ReLU(),
                                    nn.Linear(self.embed_dim, self.embed_dim),
@@ -40,11 +50,11 @@ class QTranBase(nn.Module):
                                    nn.Linear(self.embed_dim, self.embed_dim),
                                    nn.ReLU(),
                                    nn.Linear(self.embed_dim, 1))
-            ae_input = self.args.rnn_hidden_dim + self.n_actions
+            ae_input = self.rnn_hidden_dim + self.n_actions
             self.action_encoding = nn.Sequential(nn.Linear(ae_input, ae_input),
                                                  nn.ReLU(),
                                                  nn.Linear(ae_input, ae_input))
-        elif self.args.network_size == "big":
+        elif self.network_size == "big":
             self.Q = nn.Sequential(nn.Linear(q_input_size, self.embed_dim),
                                    nn.ReLU(),
                                    nn.Linear(self.embed_dim, self.embed_dim),
@@ -60,7 +70,7 @@ class QTranBase(nn.Module):
                                    nn.Linear(self.embed_dim, self.embed_dim),
                                    nn.ReLU(),
                                    nn.Linear(self.embed_dim, 1))
-            ae_input = self.args.rnn_hidden_dim + self.n_actions
+            ae_input = self.rnn_hidden_dim + self.n_actions
             self.action_encoding = nn.Sequential(nn.Linear(ae_input, ae_input),
                                                  nn.ReLU(),
                                                  nn.Linear(ae_input, ae_input))

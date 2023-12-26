@@ -1,40 +1,66 @@
 # code heavily adapted from https://github.com/oxwhirl/facmac/
 import copy
-from components.episode_buffer import EpisodeBatch
-from modules.critics.maddpg import MADDPGCritic
+from pymarl_application.components.episode_buffer import EpisodeBatch
 import torch as th
 from torch.optim import RMSprop, Adam
-from controllers.maddpg_controller import gumbel_softmax
-from modules.critics import REGISTRY as critic_registry
-from components.standarize_stream import RunningMeanStd
+from pymarl_application.controllers.maddpg_controller import gumbel_softmax
+from pymarl_application.components.standarize_stream import RunningMeanStd
 
 
 class MADDPGLearner:
-    def __init__(self, mac, scheme, logger, args):
-        self.args = args
-        self.n_agents = args.n_agents
-        self.n_actions = args.n_actions
+    def __init__(self, mac, scheme, logger,
+                 n_agents,
+                 n_actions,
+                 critic,
+                 lr,
+                 learner_log_interval,
+                 use_cuda,
+                 standardise_returns,
+                 standardise_rewards,
+                 gamma,
+                 grad_norm_clip,
+                 reg,
+                 target_update_interval_or_tau,
+                 obs_individual_obs,
+                 obs_last_action,
+                 obs_agent_id):
+
+        self.n_agents = n_agents
+        self.n_actions = n_actions
+        self.lr = lr
+        self.learner_log_interval = learner_log_interval
+        self.standardise_returns = standardise_returns
+        self.standardise_rewards = standardise_rewards
+        self.gamma = gamma
+        self.grad_norm_clip = grad_norm_clip
+        self.reg = reg
+        self.target_update_interval_or_tau = target_update_interval_or_tau
+        self.obs_individual_obs = obs_individual_obs
+        self.obs_last_action = obs_last_action
+        self.obs_agent_id = obs_agent_id
+
         self.logger = logger
 
         self.mac = mac
         self.target_mac = copy.deepcopy(self.mac)
         self.agent_params = list(mac.parameters())
 
-        self.critic = critic_registry[args.critic_type](scheme, args)
+        # self.critic = critic_registry[args.critic_type](scheme, args)
+        self.critic = critic
         self.target_critic = copy.deepcopy(self.critic)
         self.critic_params = list(self.critic.parameters())
 
-        self.agent_optimiser = Adam(params=self.agent_params, lr=self.args.lr)
-        self.critic_optimiser = Adam(params=self.critic_params, lr=self.args.lr)
+        self.agent_optimiser = Adam(params=self.agent_params, lr=self.lr)
+        self.critic_optimiser = Adam(params=self.critic_params, lr=self.lr)
 
-        self.log_stats_t = -self.args.learner_log_interval - 1
+        self.log_stats_t = -self.learner_log_interval - 1
 
         self.last_target_update_episode = 0
 
-        device = "cuda" if args.use_cuda else "cpu"
-        if self.args.standardise_returns:
+        device = "cuda" if use_cuda else "cpu"
+        if self.standardise_returns:
             self.ret_ms = RunningMeanStd(shape=(self.n_agents,), device=device)
-        if self.args.standardise_rewards:
+        if self.standardise_rewards:
             self.rew_ms = RunningMeanStd(shape=(1,), device=device)
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
@@ -47,7 +73,7 @@ class MADDPGLearner:
         mask = 1 - terminated
         batch_size = batch.batch_size
 
-        if self.args.standardise_rewards:
+        if self.standardise_rewards:
             self.rew_ms.update(rewards)
             rewards = (rewards - self.rew_ms.mean) / th.sqrt(self.rew_ms.var)
 
@@ -69,12 +95,12 @@ class MADDPGLearner:
         target_vals = self.target_critic(inputs[:, 1:], target_actions.detach())
         target_vals = target_vals.view(batch_size, -1, 1)
 
-        if self.args.standardise_returns:
+        if self.standardise_returns:
             target_vals = target_vals * th.sqrt(self.ret_ms.var) + self.ret_ms.mean
 
-        targets = rewards.reshape(-1, 1) + self.args.gamma * (1 - terminated.reshape(-1, 1)) * target_vals.reshape(-1, 1).detach()
+        targets = rewards.reshape(-1, 1) + self.gamma * (1 - terminated.reshape(-1, 1)) * target_vals.reshape(-1, 1).detach()
 
-        if self.args.standardise_returns:
+        if self.standardise_returns:
             self.ret_ms.update(targets)
             targets = (targets - self.ret_ms.mean) / th.sqrt(self.ret_ms.var)
 
@@ -84,7 +110,7 @@ class MADDPGLearner:
 
         self.critic_optimiser.zero_grad()
         loss.backward()
-        critic_grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params, self.args.grad_norm_clip)
+        critic_grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params, self.grad_norm_clip)
         self.critic_optimiser.step()
 
         # Train the actor
@@ -119,21 +145,21 @@ class MADDPGLearner:
         mask = mask.reshape(-1, 1)
 
         # Compute the actor loss
-        pg_loss = -(q * mask).mean() + self.args.reg * (pis ** 2).mean()
+        pg_loss = -(q * mask).mean() + self.reg * (pis ** 2).mean()
 
         # Optimise agents
         self.agent_optimiser.zero_grad()
         pg_loss.backward()
-        agent_grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
+        agent_grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.grad_norm_clip)
         self.agent_optimiser.step()
 
-        if self.args.target_update_interval_or_tau > 1 and (episode_num - self.last_target_update_episode) / self.args.target_update_interval_or_tau >= 1.0:
+        if self.target_update_interval_or_tau > 1 and (episode_num - self.last_target_update_episode) / self.target_update_interval_or_tau >= 1.0:
             self._update_targets_hard()
             self.last_target_update_episode = episode_num
-        elif self.args.target_update_interval_or_tau <= 1.0:
-            self._update_targets_soft(self.args.target_update_interval_or_tau)
+        elif self.target_update_interval_or_tau <= 1.0:
+            self._update_targets_soft(self.target_update_interval_or_tau)
 
-        if t_env - self.log_stats_t >= self.args.learner_log_interval:
+        if t_env - self.log_stats_t >= self.learner_log_interval:
             self.logger.log_stat("critic_loss", loss.item(), t_env)
             self.logger.log_stat("critic_grad_norm", critic_grad_norm.item(), t_env)
             self.logger.log_stat("agent_grad_norm", agent_grad_norm.item(), t_env)
@@ -152,11 +178,11 @@ class MADDPGLearner:
 
         inputs = []
         inputs.append(batch["state"][:, ts].unsqueeze(2).expand(-1, -1, self.n_agents, -1))
-        if self.args.obs_individual_obs:
+        if self.obs_individual_obs:
             inputs.append(batch["obs"][:, ts])
 
         # last actions
-        if self.args.obs_last_action:
+        if self.obs_last_action:
             if t == 0:
                 inputs.append(th.zeros_like(batch["actions_onehot"][:, 0:1]))
             elif isinstance(t, int):
@@ -166,7 +192,7 @@ class MADDPGLearner:
                                       dim=1)
                 # last_actions = last_actions.view(bs, max_t, 1, -1).repeat(1, 1, self.n_agents, 1)
                 inputs.append(last_actions)
-        if self.args.obs_agent_id:
+        if self.obs_agent_id:
             inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
 
         inputs = th.cat(inputs, dim=-1)

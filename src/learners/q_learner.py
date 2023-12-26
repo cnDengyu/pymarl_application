@@ -1,15 +1,39 @@
 import copy
-from components.episode_buffer import EpisodeBatch
-from modules.mixers.vdn import VDNMixer
-from modules.mixers.qmix import QMixer
+from pymarl_application.components.episode_buffer import EpisodeBatch
+from pymarl_application.modules.mixers.vdn import VDNMixer
+from pymarl_application.modules.mixers.qmix import QMixer
 import torch as th
 from torch.optim import Adam
-from components.standarize_stream import RunningMeanStd
+from pymarl_application.components.standarize_stream import RunningMeanStd
 
 
 class QLearner:
-    def __init__(self, mac, scheme, logger, args):
-        self.args = args
+    def __init__(self, mac, scheme, logger,
+                 n_agents,
+                 mixer,
+                 lr,
+                 learner_log_interval,
+                 use_cuda,
+                 standardise_returns,
+                 standardise_rewards,
+                 double_q : bool,
+                 gamma,
+                 grad_norm_clip,
+                 target_update_interval_or_tau,
+                 state_shape = 0,
+                 mixing_embed_dim = 0,
+                 hypernet_embed = 0,
+                 hypernet_layers = 0):
+
+        self.n_agents = n_agents
+        self.learner_log_interval = learner_log_interval
+        self.standardise_returns = standardise_returns
+        self.standardise_rewards = standardise_rewards
+        self.double_q = double_q
+        self.gamma = gamma
+        self.grad_norm_clip = grad_norm_clip
+        self.target_update_interval_or_tau = target_update_interval_or_tau
+
         self.mac = mac
         self.logger = logger
 
@@ -17,29 +41,29 @@ class QLearner:
         self.last_target_update_episode = 0
 
         self.mixer = None
-        if args.mixer is not None:
-            if args.mixer == "vdn":
+        if mixer is not None:
+            if mixer == "vdn":
                 self.mixer = VDNMixer()
-            elif args.mixer == "qmix":
-                self.mixer = QMixer(args)
+            elif mixer == "qmix":
+                self.mixer = QMixer(n_agents, state_shape, mixing_embed_dim, hypernet_embed, hypernet_layers)
             else:
-                raise ValueError("Mixer {} not recognised.".format(args.mixer))
+                raise ValueError("Mixer {} not recognised.".format(mixer))
             self.params += list(self.mixer.parameters())
             self.target_mixer = copy.deepcopy(self.mixer)
 
-        self.optimiser = Adam(params=self.params, lr=args.lr)
+        self.optimiser = Adam(params=self.params, lr=lr)
 
         # a little wasteful to deepcopy (e.g. duplicates action selector), but should work for any MAC
         self.target_mac = copy.deepcopy(mac)
 
         self.training_steps = 0
         self.last_target_update_step = 0
-        self.log_stats_t = -self.args.learner_log_interval - 1
+        self.log_stats_t = -self.learner_log_interval - 1
 
-        device = "cuda" if args.use_cuda else "cpu"
-        if self.args.standardise_returns:
+        device = "cuda" if use_cuda else "cpu"
+        if self.standardise_returns:
             self.ret_ms = RunningMeanStd(shape=(self.n_agents,), device=device)
-        if self.args.standardise_rewards:
+        if self.standardise_rewards:
             self.rew_ms = RunningMeanStd(shape=(1,), device=device)
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
@@ -51,7 +75,7 @@ class QLearner:
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         avail_actions = batch["avail_actions"]
 
-        if self.args.standardise_rewards:
+        if self.standardise_rewards:
             self.rew_ms.update(rewards)
             rewards = (rewards - self.rew_ms.mean) / th.sqrt(self.rew_ms.var)
 
@@ -79,7 +103,7 @@ class QLearner:
         target_mac_out[avail_actions[:, 1:] == 0] = -9999999
 
         # Max over target Q-Values
-        if self.args.double_q:
+        if self.double_q:
             # Get actions that maximise live Q (for double q-learning)
             mac_out_detach = mac_out.clone().detach()
             mac_out_detach[avail_actions == 0] = -9999999
@@ -93,13 +117,13 @@ class QLearner:
             chosen_action_qvals = self.mixer(chosen_action_qvals, batch["state"][:, :-1])
             target_max_qvals = self.target_mixer(target_max_qvals, batch["state"][:, 1:])
 
-        if self.args.standardise_returns:
+        if self.standardise_returns:
             target_max_qvals = target_max_qvals * th.sqrt(self.ret_ms.var) + self.ret_ms.mean
 
         # Calculate 1-step Q-Learning targets
-        targets = rewards + self.args.gamma * (1 - terminated) * target_max_qvals.detach()
+        targets = rewards + self.gamma * (1 - terminated) * target_max_qvals.detach()
 
-        if self.args.standardise_returns:
+        if self.standardise_returns:
             self.ret_ms.update(targets)
             targets = (targets - self.ret_ms.mean) / th.sqrt(self.ret_ms.var)
 
@@ -117,23 +141,23 @@ class QLearner:
         # Optimise
         self.optimiser.zero_grad()
         loss.backward()
-        grad_norm = th.nn.utils.clip_grad_norm_(self.params, self.args.grad_norm_clip)
+        grad_norm = th.nn.utils.clip_grad_norm_(self.params, self.grad_norm_clip)
         self.optimiser.step()
 
         self.training_steps += 1
-        if self.args.target_update_interval_or_tau > 1 and (self.training_steps - self.last_target_update_step) / self.args.target_update_interval_or_tau >= 1.0:
+        if self.target_update_interval_or_tau > 1 and (self.training_steps - self.last_target_update_step) / self.target_update_interval_or_tau >= 1.0:
             self._update_targets_hard()
             self.last_target_update_step = self.training_steps
-        elif self.args.target_update_interval_or_tau <= 1.0:
-            self._update_targets_soft(self.args.target_update_interval_or_tau)
+        elif self.target_update_interval_or_tau <= 1.0:
+            self._update_targets_soft(self.target_update_interval_or_tau)
 
-        if t_env - self.log_stats_t >= self.args.learner_log_interval:
+        if t_env - self.log_stats_t >= self.learner_log_interval:
             self.logger.log_stat("loss", loss.item(), t_env)
             self.logger.log_stat("grad_norm", grad_norm.item(), t_env)
             mask_elems = mask.sum().item()
             self.logger.log_stat("td_error_abs", (masked_td_error.abs().sum().item()/mask_elems), t_env)
-            self.logger.log_stat("q_taken_mean", (chosen_action_qvals * mask).sum().item()/(mask_elems * self.args.n_agents), t_env)
-            self.logger.log_stat("target_mean", (targets * mask).sum().item()/(mask_elems * self.args.n_agents), t_env)
+            self.logger.log_stat("q_taken_mean", (chosen_action_qvals * mask).sum().item()/(mask_elems * self.n_agents), t_env)
+            self.logger.log_stat("target_mean", (targets * mask).sum().item()/(mask_elems * self.n_agents), t_env)
             self.log_stats_t = t_env
 
     def _update_targets_hard(self):

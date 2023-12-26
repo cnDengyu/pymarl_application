@@ -1,6 +1,5 @@
-from envs import REGISTRY as env_REGISTRY
 from functools import partial
-from components.episode_buffer import EpisodeBatch
+from pymarl_application.components.episode_buffer import EpisodeBatch
 from multiprocessing import Pipe, Process
 import numpy as np
 import torch as th
@@ -10,20 +9,33 @@ import torch as th
 # https://github.com/openai/baselines/blob/master/baselines/common/vec_env/subproc_vec_env.py
 class ParallelRunner:
 
-    def __init__(self, args, logger):
-        self.args = args
+    def __init__(self, logger,
+                 batch_size_run,
+                 env_fn,
+                 env_args,
+                 device,
+                 render : bool,
+                 test_nepisode,
+                 runner_log_interval):
+        self.device = device
+        self.render = render
+        self.test_nepisode = test_nepisode
+        self.runner_log_interval = runner_log_interval
+
         self.logger = logger
-        self.batch_size = self.args.batch_size_run
+        self.batch_size = batch_size_run
 
         # Make subprocesses for the envs
         self.parent_conns, self.worker_conns = zip(*[Pipe() for _ in range(self.batch_size)])
-        env_fn = env_REGISTRY[self.args.env]
-        env_args = [self.args.env_args.copy() for _ in range(self.batch_size)]
+        # env_fn = env_REGISTRY[self.args.env]
+        env_fn = env_fn
+        # env_args = [self.args.env_args.copy() for _ in range(self.batch_size)]
+        multi_env_args = [env_args.copy() for _ in range(self.batch_size)]
         for i in range(self.batch_size):
             env_args[i]["seed"] += i
 
         self.ps = [Process(target=env_worker, args=(worker_conn, CloudpickleWrapper(partial(env_fn, **env_arg))))
-                            for env_arg, worker_conn in zip(env_args, self.worker_conns)]
+                            for env_arg, worker_conn in zip(multi_env_args, self.worker_conns)]
 
         for p in self.ps:
             p.daemon = True
@@ -46,7 +58,7 @@ class ParallelRunner:
 
     def setup(self, scheme, groups, preprocess, mac):
         self.new_batch = partial(EpisodeBatch, scheme, groups, self.batch_size, self.episode_limit + 1,
-                                 preprocess=preprocess, device=self.args.device)
+                                 preprocess=preprocess, device=self.device)
         self.mac = mac
         self.scheme = scheme
         self.groups = groups
@@ -117,7 +129,7 @@ class ParallelRunner:
                     if not terminated[idx]: # Only send the actions to the env if it hasn't terminated
                         parent_conn.send(("step", cpu_actions[action_idx]))
                     action_idx += 1 # actions is not a list over every env
-                    if idx == 0 and test_mode and self.args.render:
+                    if idx == 0 and test_mode and self.render:
                         parent_conn.send(("render", None))
 
             # Update envs_not_terminated
@@ -194,10 +206,10 @@ class ParallelRunner:
 
         cur_returns.extend(episode_returns)
 
-        n_test_runs = max(1, self.args.test_nepisode // self.batch_size) * self.batch_size
+        n_test_runs = max(1, self.test_nepisode // self.batch_size) * self.batch_size
         if test_mode and (len(self.test_returns) == n_test_runs):
             self._log(cur_returns, cur_stats, log_prefix)
-        elif self.t_env - self.log_train_stats_t >= self.args.runner_log_interval:
+        elif self.t_env - self.log_train_stats_t >= self.runner_log_interval:
             self._log(cur_returns, cur_stats, log_prefix)
             if hasattr(self.mac.action_selector, "epsilon"):
                 self.logger.log_stat("epsilon", self.mac.action_selector.epsilon, self.t_env)

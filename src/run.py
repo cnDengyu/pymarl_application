@@ -5,15 +5,19 @@ import time
 import threading
 import torch as th
 from types import SimpleNamespace as SN
-from utils.logging import Logger
-from utils.timehelper import time_left, time_str
+from pymarl_application.utils.logging import Logger
+from pymarl_application.utils.timehelper import time_left, time_str
 from os.path import dirname, abspath
 
-from learners import REGISTRY as le_REGISTRY
-from runners import REGISTRY as r_REGISTRY
-from controllers import REGISTRY as mac_REGISTRY
-from components.episode_buffer import ReplayBuffer
-from components.transforms import OneHot
+from pymarl_application.envs import REGISTRY as env_REGISTRY
+from pymarl_application.modules.agents import registered_agent
+from pymarl_application.modules.critics import registered_critic
+from pymarl_application.learners import registered_learner
+from pymarl_application.runners import registered_runner
+from pymarl_application.controllers import registered_controller
+from pymarl_application.components.action_selectors import registered_action_selector
+from pymarl_application.components.episode_buffer import ReplayBuffer
+from pymarl_application.components.transforms import OneHot
 
 
 def run(_run, _config, _log):
@@ -38,6 +42,7 @@ def run(_run, _config, _log):
         map_name = _config["env_args"]["map_name"]
     except:
         map_name = _config["env_args"]["key"]
+    # map_name = map_name.replace(':', '-') # ':' is not a valid file name on Windows
     unique_token = f"{_config['name']}_seed{_config['seed']}_{map_name}_{datetime.datetime.now()}"
 
     args.unique_token = unique_token
@@ -70,12 +75,12 @@ def run(_run, _config, _log):
     # os._exit(os.EX_OK)
 
 
-def evaluate_sequential(args, runner):
+def evaluate_sequential(runner, test_nepisode, save_replay):
 
-    for _ in range(args.test_nepisode):
+    for _ in range(test_nepisode):
         runner.run(test_mode=True)
 
-    if args.save_replay:
+    if save_replay:
         runner.save_replay()
 
     runner.close_env()
@@ -83,10 +88,17 @@ def evaluate_sequential(args, runner):
 
 def run_sequential(args, logger):
 
-    # Init runner so we can get env info
-    runner = r_REGISTRY[args.runner](args=args, logger=logger)
+    device = "cuda" if args.use_cuda else "cpu"
 
-    # Set up schemes and groups here
+    # Select env
+    env_fn = env_REGISTRY[args.env]
+
+    logger.console_logger.info("env key = {}", args.env_args['key'])
+
+    # Init runner so we can get env info
+    runner = registered_runner(env_fn, device, logger, args)
+
+    # Set up schemes and groups here. Must be executed before agent selection.
     env_info = runner.get_env_info()
     args.n_agents = env_info["n_agents"]
     args.n_actions = env_info["n_actions"]
@@ -117,14 +129,33 @@ def run_sequential(args, logger):
         device="cpu" if args.buffer_cpu_only else args.device,
     )
 
+    # Select agent
+    agent_fn = registered_agent(args)
+
+    # Select action_selector
+    action_selector = registered_action_selector(args)
+
     # Setup multiagent controller here
-    mac = mac_REGISTRY[args.mac](buffer.scheme, groups, args)
+    mac = registered_controller(scheme, groups, agent_fn, action_selector, args)
 
     # Give runner the scheme
     runner.setup(scheme=scheme, groups=groups, preprocess=preprocess, mac=mac)
 
+    # Select critic if necessary
+    if hasattr(args, "critic_type"):
+        critic = registered_critic(args.critic_type, scheme, args)
+    else:
+        critic = None
+    
+    if hasattr(args, "state_value_type"):
+        state_value = registered_critic(args.state_value_type, scheme, args)
+    else:
+        state_value = None
+
     # Learner
-    learner = le_REGISTRY[args.learner](mac, buffer.scheme, logger, args)
+    learner = registered_learner(mac, critic, state_value, scheme, logger, args)
+
+    logger.console_logger.info("learner has been selected.")
 
     if args.use_cuda:
         learner.cuda()

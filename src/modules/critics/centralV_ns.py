@@ -3,22 +3,28 @@
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
-from modules.critics.mlp import MLP
+from pymarl_application.modules.critics.mlp import MLP
 
 
 class CentralVCriticNS(nn.Module):
-    def __init__(self, scheme, args):
+    def __init__(self, scheme,
+                 n_actions,
+                 n_agents,
+                 hidden_dim,
+                 obs_individual_obs: bool = False,
+                 obs_last_action: bool = False):
         super(CentralVCriticNS, self).__init__()
 
-        self.args = args
-        self.n_actions = args.n_actions
-        self.n_agents = args.n_agents
+        self.n_actions = n_actions
+        self.n_agents = n_agents
+        self.obs_individual_obs = obs_individual_obs
+        self.obs_last_action = obs_last_action
 
         input_shape = self._get_input_shape(scheme)
         self.output_type = "v"
 
         # Set up network layers
-        self.critics = [MLP(input_shape, args.hidden_dim, 1) for _ in range(self.n_agents)]
+        self.critics = [MLP(input_shape, hidden_dim, 1) for _ in range(self.n_agents)]
 
     def forward(self, batch, t=None):
         inputs, bs, max_t = self._build_inputs(batch, t=t)
@@ -38,10 +44,10 @@ class CentralVCriticNS(nn.Module):
         inputs.append(batch["state"][:, ts])
 
         # observations
-        if self.args.obs_individual_obs:
+        if self.obs_individual_obs:
             inputs.append(batch["obs"][:, ts].view(bs, max_t, -1))
 
-        if self.args.obs_last_action:
+        if self.obs_last_action:
             # last actions
             if t == 0:
                 inputs.append(th.zeros_like(batch["actions_onehot"][:, 0:1]).view(bs, max_t, 1, -1))
@@ -59,10 +65,10 @@ class CentralVCriticNS(nn.Module):
         # state
         input_shape = scheme["state"]["vshape"]
         # observations
-        if self.args.obs_individual_obs:
+        if self.obs_individual_obs:
             input_shape += scheme["obs"]["vshape"]
         # last actions
-        if self.args.obs_last_action:
+        if self.obs_last_action:
             input_shape += scheme["actions_onehot"]["vshape"][0] * self.n_agents
 
         return input_shape

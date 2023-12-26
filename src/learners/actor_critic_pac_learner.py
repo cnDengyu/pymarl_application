@@ -1,38 +1,66 @@
 # -*- coding: utf-8 -*-
 
 import copy
-from components.episode_buffer import EpisodeBatch
-from modules.critics.centralV import CentralVCritic
-from utils.rl_utils import build_td_lambda_targets
+from pymarl_application.components.episode_buffer import EpisodeBatch
+from pymarl_application.modules.critics.centralV import CentralVCritic
+from pymarl_application.utils.rl_utils import build_td_lambda_targets
 import torch as th
 from torch.optim import Adam
-from modules.critics import REGISTRY as critic_resigtry
 from einops import rearrange
-from components.standarize_stream import RunningMeanStd
+from pymarl_application.components.standarize_stream import RunningMeanStd
 
 class PACActorCriticLearner:
-    def __init__(self, mac, scheme, logger, args):
-        self.args = args
-        self.n_agents = args.n_agents
-        self.n_actions = args.n_actions
+    def __init__(self, mac, scheme, logger,
+                 n_agents,
+                 n_actions,
+                 lr,
+                 critic,
+                 state_value,
+                 learner_log_interval,
+                 use_cuda,
+                 t_max,
+                 entropy_end_ratio,
+                 final_entropy_coef,
+                 initial_entropy_coef,
+                 grad_norm_clip,
+                 target_update_interval_or_tau,
+                 standardise_rewards,
+                 q_nstep,
+                 gamma):
+
+        self.n_agents = n_agents
+        self.n_actions = n_actions
+        self.learner_log_interval = learner_log_interval
+        self.t_max = t_max
+        self.entropy_end_ratio = entropy_end_ratio
+        self.final_entropy_coef = final_entropy_coef
+        self.initial_entropy_coef = initial_entropy_coef
+        self.grad_norm_clip = grad_norm_clip
+        self.target_update_interval_or_tau = target_update_interval_or_tau
+        self.standardise_rewards = standardise_rewards
+        self.q_nstep = q_nstep
+        self.gamma = gamma
+
         self.logger = logger
 
         self.mac = mac
         self.agent_params = list(mac.parameters())
-        self.agent_optimiser = Adam(params=self.agent_params, lr=args.lr)
+        self.agent_optimiser = Adam(params=self.agent_params, lr=lr)
         
-        self.critic = critic_resigtry[args.critic_type](scheme, args)
+        # self.critic = critic_resigtry[args.critic_type](scheme, args)
+        self.critic = critic
         self.target_critic = copy.deepcopy(self.critic)
-        self.state_value = critic_resigtry[args.state_value_type](scheme, args)
+        # self.state_value = critic_resigtry[args.state_value_type](scheme, args)
+        self.state_value = state_value
         
         self.critic_params = list(self.critic.parameters()) + list(self.state_value.parameters())
-        self.critic_optimiser = Adam(params=self.critic_params, lr=args.lr)
+        self.critic_optimiser = Adam(params=self.critic_params, lr=lr)
 
         self.last_target_update_step = 0
         self.critic_training_steps = 0
-        self.log_stats_t = -self.args.learner_log_interval - 1
+        self.log_stats_t = -self.learner_log_interval - 1
 
-        device = "cuda" if args.use_cuda else "cpu"
+        device = "cuda" if use_cuda else "cpu"
         self.ret_ms = RunningMeanStd(shape=(self.n_agents, ), device=device)
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
@@ -68,25 +96,25 @@ class PACActorCriticLearner:
 
         entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
 
-        training_ratio_now = min(1.0, t_env / (self.args.t_max * self.args.entropy_end_ratio))
-        entropy_coef = training_ratio_now * self.args.final_entropy_coef + (1.0-training_ratio_now) * self.args.initial_entropy_coef
+        training_ratio_now = min(1.0, t_env / (self.t_max * self.entropy_end_ratio))
+        entropy_coef = training_ratio_now * self.final_entropy_coef + (1.0-training_ratio_now) * self.initial_entropy_coef
         pg_loss = -((advantages * log_pi_taken + entropy_coef * entropy) * mask).sum() / mask.sum()
 
         # Optimise agents
         self.agent_optimiser.zero_grad()
         pg_loss.backward()
-        grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
+        grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.grad_norm_clip)
         self.agent_optimiser.step()
 
         self.critic_training_steps += 1
-        if self.args.target_update_interval_or_tau > 1 and (
-                self.critic_training_steps - self.last_target_update_step) / self.args.target_update_interval_or_tau >= 1.0:
+        if self.target_update_interval_or_tau > 1 and (
+                self.critic_training_steps - self.last_target_update_step) / self.target_update_interval_or_tau >= 1.0:
             self._update_targets_hard()
             self.last_target_update_step = self.critic_training_steps
-        elif self.args.target_update_interval_or_tau <= 1.0:
-            self._update_targets_soft(self.args.target_update_interval_or_tau)
+        elif self.target_update_interval_or_tau <= 1.0:
+            self._update_targets_soft(self.target_update_interval_or_tau)
 
-        if t_env - self.log_stats_t >= self.args.learner_log_interval:
+        if t_env - self.log_stats_t >= self.learner_log_interval:
             ts_logged = len(critic_train_stats["critic_loss"])
             for key in ["critic_loss", "critic_grad_norm", "td_error_abs", "q_taken_mean", "target_mean"]:
                 self.logger.log_stat(key, sum(critic_train_stats[key]) / ts_logged, t_env)
@@ -108,12 +136,12 @@ class PACActorCriticLearner:
         
         target_vals = th.gather(target_vals, -1, actions[:, :-1]).squeeze(-1)
         
-        if self.args.standardise_rewards:
+        if self.standardise_rewards:
             target_vals = target_vals * th.sqrt(self.ret_ms.var) + self.ret_ms.mean
-        target_returns = self.nstep_returns(rewards, mask, target_vals, self.args.q_nstep)
+        target_returns = self.nstep_returns(rewards, mask, target_vals, self.q_nstep)
         
 
-        if self.args.standardise_rewards:
+        if self.standardise_rewards:
             self.ret_ms.update(target_returns)
             target_returns = (target_returns - self.ret_ms.mean) / th.sqrt(self.ret_ms.var)
 
@@ -153,7 +181,7 @@ class PACActorCriticLearner:
 
         self.critic_optimiser.zero_grad()
         loss.backward()
-        grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params, self.args.grad_norm_clip)
+        grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params, self.grad_norm_clip)
         self.critic_optimiser.step()
 
         running_log["critic_loss"].append(loss.item())
@@ -175,9 +203,9 @@ class PACActorCriticLearner:
                 if t >= rewards.size(1):
                     break
                 elif step == nsteps:
-                    nstep_return_t += self.args.gamma ** (step) * values[:, t] * mask[:, t]
+                    nstep_return_t += self.gamma ** (step) * values[:, t] * mask[:, t]
                 else:
-                    nstep_return_t += self.args.gamma ** (step) * rewards[:, t] * mask[:, t]
+                    nstep_return_t += self.gamma ** (step) * rewards[:, t] * mask[:, t]
             nstep_values[:, t_start, :] = nstep_return_t
         return nstep_values
 
