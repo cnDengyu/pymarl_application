@@ -1,4 +1,22 @@
-# code adapted from https://github.com/AnujMahajanOxf/MAVEN
+"""CentralV Critic (not sharing parameters)
+
+code adapted from https://github.com/AnujMahajanOxf/MAVEN
+
+Paper at https://proceedings.neurips.cc/paper/2019/hash/f816dc0acface7498e10496222e9db10-Abstract.html
+
+Citation
+
+.. code-block:: bibtex
+
+    @inproceedings{mahajan2019maven,
+    title={MAVEN: Multi-Agent Variational Exploration},
+    author={Mahajan, Anuj and Rashid, Tabish and Samvelyan, Mikayel and Whiteson, Shimon},
+    booktitle={Advances in Neural Information Processing Systems},
+    pages={7611--7622},
+    year={2019}
+    }
+
+"""
 
 import torch as th
 import torch.nn as nn

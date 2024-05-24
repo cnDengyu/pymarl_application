@@ -1,5 +1,5 @@
 from functools import partial
-import pretrained
+from pymarl_application import pretrained
 # from smac.env import MultiAgentEnv, StarCraft2Env
 from smac.env import MultiAgentEnv
 import sys

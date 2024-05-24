@@ -1,9 +1,14 @@
+"""AC Critic (share parameters)
+"""
+
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
 
 class ACCritic(nn.Module):
+    """AC Critic (share parameters)
+    """
     def __init__(self, scheme,
                  n_actions,
                  n_agents,

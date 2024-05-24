@@ -1,4 +1,12 @@
-# code adapted from https://github.com/oxwhirl/facmac/
+""" FACtored Multi-Agent Centralised policy gradients (not sharing parameters)
+
+code adapted from https://github.com/oxwhirl/facmac/
+
+Paper at https://proceedings.neurips.cc/paper/2021/hash/65b9eea6e1cc6bb9f0cd2a47751a186f-Abstract.html
+
+Preprint at https://arxiv.org/abs/2003.06709
+"""
+
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F

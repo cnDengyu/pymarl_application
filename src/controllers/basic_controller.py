@@ -1,5 +1,3 @@
-from pymarl_application.modules.agents import REGISTRY as agent_REGISTRY
-from pymarl_application.components.action_selectors import REGISTRY as action_REGISTRY
 import torch as th
 
 

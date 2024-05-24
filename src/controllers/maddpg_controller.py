@@ -26,14 +26,18 @@ def gumbel_softmax_sample(logits, temperature):
 # modified for PyTorch from https://github.com/ericjang/gumbel-softmax/blob/master/Categorical%20VAE.ipynb
 def gumbel_softmax(logits, temperature=1.0, hard=False):
     """Sample from the Gumbel-Softmax distribution and optionally discretize.
+    
     Args:
-      logits: [batch_size, n_class] unnormalized log-probs
-      temperature: non-negative scalar
-      hard: if True, take argmax, but differentiate w.r.t. soft sample y
+        logits: [batch_size, n_class] unnormalized log-probs
+        temperature: non-negative scalar
+        hard: if True, take argmax, but differentiate w.r.t. soft sample y
+
     Returns:
-      [batch_size, n_class] sample from the Gumbel-Softmax distribution.
-      If hard=True, then the returned sample will be one-hot, otherwise it will
-      be a probabilitiy distribution that sums to 1 across classes
+        [batch_size, n_class] sample from the Gumbel-Softmax distribution.
+        If hard=True, then the returned sample will be one-hot, otherwise it will
+        be a probabilitiy distribution that sums to 1 across classes
+
+    modified for PyTorch from https://github.com/ericjang/gumbel-softmax/blob/master/Categorical%20VAE.ipynb
     """
 
     y = gumbel_softmax_sample(logits, temperature)

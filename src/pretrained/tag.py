@@ -1,6 +1,6 @@
 import gym
 from gym.spaces import Tuple
-from pretrained.ddpg import DDPG
+from pymarl_application.pretrained.ddpg import DDPG
 import torch
 import os
 

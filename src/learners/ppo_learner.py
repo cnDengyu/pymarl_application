@@ -3,6 +3,7 @@ import copy
 from pymarl_application.components.episode_buffer import EpisodeBatch
 from pymarl_application.utils.rl_utils import build_td_lambda_targets
 import torch as th
+import numpy as np
 from torch.optim import Adam
 from pymarl_application.components.standarize_stream import RunningMeanStd
 
@@ -24,12 +25,14 @@ class PPOLearner:
                  target_update_interval_or_tau,
                  q_nstep,
                  gamma,
-                 add_value_last_step):
+                 add_value_last_step,
+                 normalize_advantage=True):
         self.n_agents = n_agents
         self.n_actions = n_actions
         self.learner_log_interval = learner_log_interval
         self.standardise_returns = standardise_returns
         self.standardise_rewards = standardise_rewards
+        self.normalize_advantage = normalize_advantage
         self.epochs = epochs
         self.eps_clip = eps_clip
         self.entropy_coef = entropy_coef

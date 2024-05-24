@@ -1,3 +1,6 @@
+"""AC Critic (not sharing parameters)
+"""
+
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,6 +8,8 @@ from pymarl_application.modules.critics.mlp import MLP
 
 
 class ACCriticNS(nn.Module):
+    """AC Critic (not sharing parameters)
+    """
     def __init__(self, scheme,
                  n_actions,
                  n_agents,

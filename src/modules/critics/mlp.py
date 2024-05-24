@@ -1,3 +1,8 @@
+"""Multilayer Perceptron
+
+This is a simple 3 layer MLP
+
+"""
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F

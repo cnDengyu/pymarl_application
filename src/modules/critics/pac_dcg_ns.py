@@ -1,4 +1,12 @@
-# code adapted from https://github.com/wendelinboehmer/dcg
+"""Deep Coordination Graphs (not sharing parameters)
+
+code adapted from https://github.com/wendelinboehmer/dcg
+
+Paper at https://proceedings.mlr.press/v119/boehmer20a.html
+
+Preprint at https://arxiv.org/abs/1910.00091
+
+"""
 
 import torch as th
 import contextlib
@@ -11,7 +19,7 @@ import torch_scatter
 
 
 class DCGCriticNS():
-    """ Implements DCG without any parameter sharing between agents (Boehmer et al., 2020). """
+    """Implements DCG without any parameter sharing between agents (Boehmer et al., 2020). """
 
     # ================================ Constructors ===================================================================
 
@@ -57,7 +65,7 @@ class DCGCriticNS():
     # ================== DCG Core Methods =============================================================================
 
     def annotations(self, ep_batch, t, compute_grads=False, actions=None):
-        """ Returns all outputs of the utility and payoff functions. """
+        """Returns all outputs of the utility and payoff functions. """
         with th.no_grad() if not compute_grads else contextlib.suppress():
             # Compute all hidden states
             agent_inputs = self._build_inputs(ep_batch, t).view(ep_batch.batch_size, self.n_agents, -1)
@@ -79,7 +87,7 @@ class DCGCriticNS():
         return f_i, f_ij
 
     def single_payoff(self, payoff_fun, edge, hidden_states):
-        """ Computes one payoff at a time, as each payoff function does have different parameters. """
+        """Computes one payoff at a time, as each payoff function does have different parameters. """
         # Construct the inputs for all edges' payoff functions and their flipped counterparts
         n = self.n_actions
         inputs = th.stack([th.cat([hidden_states[self.edges_from[edge]], hidden_states[self.edges_to[edge]]], dim=-1),
@@ -107,7 +115,7 @@ class DCGCriticNS():
     # ================== Override methods of DeepCoordinationGraphMAC =================================================
 
     def _edge_list(self, arg):
-        """ Specifies edges for various topologies. """
+        """Specifies edges for various topologies. """
         edges = []
         wrong_arg = "Parameter cg_edges must be either a string:{'vdn','line','cycle','star','full'}, " \
                     "an int for the number of random edges (<= n_agents!), " \
@@ -145,7 +153,7 @@ class DCGCriticNS():
         return edges
 
     def q_values(self, f_i, f_ij, actions):
-        """ Computes the Q-values for given utilities, payoffs and actions (Algorithm 2 in Boehmer et al., 2020). """
+        """Computes the Q-values for given utilities, payoffs and actions (Algorithm 2 in Boehmer et al., 2020). """
         n_batches = actions.shape[0]
         # Use the utilities for the chosen actions
         values = f_i.gather(dim=-1, index=actions).squeeze(dim=-1).mean(dim=-1)
@@ -159,8 +167,8 @@ class DCGCriticNS():
         return values
 
     def greedy(self, f_i, f_ij, available_actions=None):
-        """ Finds the maximum Q-values and corresponding greedy actions for given utilities and payoffs.
-            (Algorithm 3 in Boehmer et al., 2020)"""
+        """Finds the maximum Q-values and corresponding greedy actions for given utilities and payoffs.
+        (Algorithm 3 in Boehmer et al., 2020)"""
         # All relevant tensors should be double to reduce accumulating precision loss
         in_f_i, f_i = f_i, f_i.double() / self.n_agents
         in_f_ij, f_ij = f_ij, f_ij.double() / len(self.edges_from)
@@ -204,7 +212,7 @@ class DCGCriticNS():
         return best_actions
 
     def _set_edges(self, edge_list):
-        """ Takes a list of tuples [0..n_agents)^2 and constructs the internal CG edge representation. """
+        """Takes a list of tuples [0..n_agents)^2 and constructs the internal CG edge representation. """
         self.edges_from = th.zeros(len(edge_list), dtype=th.long)
         self.edges_to = th.zeros(len(edge_list), dtype=th.long)
         for i, edge in enumerate(edge_list):
@@ -217,12 +225,12 @@ class DCGCriticNS():
         self.edges_n_in = self.edges_n_in.float()
 
     def _build_agents(self, input_shape):
-        """ Overloads method to build a list of input-encoders for the different agents. """
+        """Overloads method to build a list of input-encoders for the different agents. """
         # self.agents = [agent_REGISTRY["rnn_feat"](input_shape, self.args) for _ in range(self.n_agents)]
         self.agents = [RNNFeatureAgent(input_shape, self.hidden_dim) for _ in range(self.n_agents)]
 
     def cuda(self):
-        """ Overloads methornn_d to make sure all encoders, utilities and payoffs are on the GPU. """
+        """Overloads methornn_d to make sure all encoders, utilities and payoffs are on the GPU. """
         for ag in self.agents:
             ag.cuda()
         for f in self.utility_fun:
@@ -235,7 +243,7 @@ class DCGCriticNS():
             self.edges_n_in = self.edges_n_in.cuda()
 
     def parameters(self):
-        """ Overloads method to make sure the parameters of all encoders, utilities and payoffs are returned. """
+        """Overloads method to make sure the parameters of all encoders, utilities and payoffs are returned. """
         param = itertools.chain(*[ag.parameters() for ag in self.agents],
                                 *[f.parameters() for f in self.utility_fun],
                                 *[f.parameters() for f in self.payoff_fun])
@@ -246,7 +254,7 @@ class DCGCriticNS():
         return [ag.state_dict() for ag in self.agents] + [f.state_dict() for f in self.utility_fun] + [f.state_dict() for f in self.payoff_fun]
 
     def load_state_dict(self, other_mac):
-        """ Overloads method to make sure the parameters of all encoders, utilities and payoffs are swapped. """
+        """Overloads method to make sure the parameters of all encoders, utilities and payoffs are swapped. """
         for i in range(len(self.agents)):
             self.agents[i].load_state_dict(other_mac.agents[i].state_dict())
         for i in range(len(self.utility_fun)):
@@ -256,7 +264,7 @@ class DCGCriticNS():
 
     @staticmethod
     def _mlp(input, hidden_dims, output):
-        """ Creates an MLP with the specified input and output dimensions and (optional) hidden layers. """
+        """Creates an MLP with the specified input and output dimensions and (optional) hidden layers. """
         hidden_dims = [] if hidden_dims is None else hidden_dims
         hidden_dims = [hidden_dims] if isinstance(hidden_dims, int) else hidden_dims
         dim = input
@@ -283,14 +291,15 @@ class DCGCriticNS():
         return inputs
 
     def init_hidden(self, batch_size):
-        """ Overloads method to make sure the hidden states of all agents are intialized. """
+        """Overloads method to make sure the hidden states of all agents are intialized. """
         self.hidden_states = [ag.init_hidden().expand(batch_size, -1) for ag in self.agents]  # bv
 
     def forward(self, ep_batch, t, actions=None, policy_mode=True, test_mode=False, compute_grads=False):
-        """ This is the main function that is called by learner and runner.
-            If policy_mode=True,    returns the greedy policy (for controller) for the given ep_batch at time t.
-            If policy_mode=False,   returns either the Q-values for given 'actions'
-                                            or the actions of of the greedy policy for 'actions==None'.  """
+        """This is the main function that is called by learner and runner.
+
+        If policy_mode=True, returns the greedy policy (for controller) for the given ep_batch at time t.
+        If policy_mode=False, returns either the Q-values for given 'actions' or the actions of of the greedy policy for 'actions==None'.
+        """
         # Get the utilities and payoffs after observing time step t
         f_i, f_ij = self.annotations(ep_batch, t, compute_grads, actions)
         # We either return the values for the given batch and actions...
